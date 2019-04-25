@@ -1,0 +1,171 @@
+from threading import Thread
+from ctypes import windll, c_buffer
+import random
+
+winmm = windll.winmm
+
+class AudioClip(object):
+    """A threaded way to play audio files on Windows
+    
+    Positional Arguments:
+    file_path -- The path to the audio file to play
+    
+    Keyword Arguments:
+    callback -- A function to call when the audio file ends
+    volume -- Sets the volume of the playback (0-1000)
+    bass_volume -- Sets the volume of the bass (0-1000)
+    treble_volume -- Sets the volume of the treble (0-1000)"""
+    def __init__(self, file_path, callback=None, volume=1000, bass_volume=1000, treble_volume=1000):
+        self.event_queue = []
+        self.path = file_path
+        self.alias = file_path + str(random.random())
+        self.callback = callback
+        self.status = "loading"
+        self.volume = volume
+        self.bass_volume = bass_volume
+        self.treble_volume = treble_volume
+        
+        self.__start_event_thread()
+
+    def __start_event_thread(self):
+        """Prepares the audio file to be played and to handle commnds"""
+        if self.volume != 1000:
+            self.set_volume(self.volume)
+        if self.bass_volume != 1000:
+            self.set_bass(self.bass_volume)
+        if self.treble_volume != 1000: 
+            self.set_treble(self.treble_volume)
+        self.thread = Thread(target=self.__event_thread, daemon=True)
+        self.thread.start()
+
+    def __event_thread(self):
+        """Handles initially loading the file and handles commands that are sent to the file"""
+        #Load music to play
+        AudioClip.mci_send("Open {0} type mpegvideo alias {1}".format(self.path, self.alias))
+        self.file_length = int(AudioClip.mci_send("Status {0} length".format(self.alias)))
+        self.status = "loaded"
+        
+        #Close the audio file if the audio file is stopped or if it completes playing
+        while self.status != "stopped" and not (self.status == 'playing' and self.__system_status() == "stopped"):
+            for event in self.event_queue:
+                self.__getattribute__("_AudioClip__" + event[0])(*event[1])
+            self.event_queue = []
+
+        self.status = "dead"
+        if self.callback:
+            self.callback()
+
+    def cue(self):
+        """Loads the audio file into memory
+        Not required but my reduce the time to start playing the audio file when Play is called"""
+        self.event_queue.append(["cue", []])
+
+    def __cue(self):
+        """Adds cue event to the event_queue"""
+        AudioClip.mci_send("Cue {0}".format(self.alias))
+        self.status = "cued"
+
+    def pause(self):
+        """Pauses the audio file at it's current position so it can be resumed."""
+        self.event_queue.append(["pause", []])
+
+    def __pause(self):
+        """Adds pause event to the event_queue"""
+        AudioClip.mci_send("Pause {0}".format(self.alias))
+        self.status = "paused"
+
+    def play(self):
+        """Play the audio file"""
+        # If the event thread isn't currently running start it
+        if not self.thread.is_alive():
+            self.__start_event_thread()
+
+        self.event_queue.append(["play", []])
+
+    def __play(self):
+        """Adds play event to the event_queue"""
+        AudioClip.mci_send("Play {0} notify".format(self.alias))
+        self.status = "playing"
+
+    def seek(self, milliseconds):
+        """Seeks to a particular spot in the file so that playback can happen from there
+        
+        Positional Arguments:
+        milliseconds -- how many milliseconds from the beginning of the audio clip to seek to"""
+        self.event_queue.append(["seek", [milliseconds,]])
+
+    def __seek(self, milliseconds):
+        """Adds cue event to the event_queue
+        
+        Positional Arguments:
+        milliseconds -- how many milliseconds from the beginning of the audio clip to seek to"""
+        AudioClip.mci_send("Seek {0} to {1}".format(self.alias, str(milliseconds)))
+
+    def set_volume(self, volume):
+        """Set the volume of the playback
+        
+        Positional Arguments:
+        volume -- Sets the volume of the playback (0-1000)"""
+        self.event_queue.append(["set_volume", [volume]])
+
+    def __set_volume(self, volume):
+        """Adds set volume event to the event_queue"""
+        AudioClip.mci_send("Setaudio {0} volume to {1}".format(self.alias, volume))
+
+    def set_bass(self, volume):
+        """Set the bass volume of the playback
+        Not all systems can process this request.
+
+        Positional Arguments:
+        bass_volume -- Sets the volume of the bass (0-1000)"""
+        
+        self.event_queue.append(["set_bass", [volume]])
+
+    def __set_bass(self, volume):
+        """Adds set bass event to the event_queue
+
+        Positional Arguments:
+        bass_volume -- Sets the volume of the bass (0-1000)"""
+        AudioClip.mci_send("Setaudio {0} bass to {1}".format(self.alias, volume))
+
+    def set_treble(self, volume):
+        """Set the treble volume of the playback
+        Not all systems can process this request.
+
+        Positional Arguments:
+        treble_volume -- Sets the volume of the treble (0-1000)"""
+        self.event_queue.append(["set_treble", [volume]])
+
+    def __set_treble(self, volume):
+        """Adds set treble event to the event_queue
+        
+        Positional Arguments:
+        treble_volume -- Sets the volume of the treble (0-1000)"""
+        AudioClip.mci_send("Setaudio {0} treble to {1}".format(self.alias, volume))
+
+    def stop(self):
+        """Stops the current playback and resets playback to the start of the audio file"""
+        self.event_queue.append(["seek", [0]])
+        self.event_queue.append(["stop", []])
+        self.status = "stopped"
+
+    def __stop(self):
+        """Adds stop event to the event_queue"""
+        AudioClip.mci_send("Stop {0}".format(self.alias))
+
+    def __system_status(self):
+        """Returns the system playing status"""
+        return AudioClip.mci_send("Status {0} mode".format(self.alias))
+
+    @staticmethod
+    def mci_send(command):
+        """Sends an media command to the operating system
+        
+        Positional Arguments:
+        command -- The command to be sent to the operating system"""
+        buffer = c_buffer(255)
+        result = winmm.mciSendStringA(command.encode(), buffer, 254, 0)
+
+        if result != 0:
+            print("Error {0} in mciSendString {1}".format( result, command ))
+        return buffer.value.decode()
