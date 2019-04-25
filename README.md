@@ -1,7 +1,7 @@
 # PyAudioClip
 A python library for playing treaded audio clips in windows.
 
-Use to:
+To use:
 ```
 audio_clip = AudioClip('path_to_audio_file')
 audio_clip.play()
