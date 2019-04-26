@@ -18,6 +18,7 @@ If you want to have a callback function when the audio clip has finished playing
 from PyAudioClip import AudioClip
 
 def callback_func():
+  @global is_playing
   is_playing = False
   print("Audio Clip Finished")
   
