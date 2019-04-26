@@ -4,6 +4,7 @@ import random
 
 winmm = windll.winmm
 
+
 class AudioClip(object):
     """A threaded way to play audio files on Windows
     
@@ -17,13 +18,14 @@ class AudioClip(object):
     treble_volume -- Sets the volume of the treble (0-1000)"""
     def __init__(self, file_path, callback=None, volume=1000, bass_volume=1000, treble_volume=1000):
         self.event_queue = []
-        self.path = file_path
-        self.alias = file_path + str(random.random())
+        self.path = '"' + file_path + '"'
+        self.alias = '"' + file_path + str(random.random()) + '"'
         self.callback = callback
         self.status = "loading"
         self.volume = volume
         self.bass_volume = bass_volume
         self.treble_volume = treble_volume
+        self.error = ""
         
         self.__start_event_thread()
 
@@ -35,16 +37,21 @@ class AudioClip(object):
             self.set_bass(self.bass_volume)
         if self.treble_volume != 1000: 
             self.set_treble(self.treble_volume)
+
         self.thread = Thread(target=self.__event_thread, daemon=True)
         self.thread.start()
 
     def __event_thread(self):
-        """Handles initially loading the file and handles commands that are sent to the file"""
+        """Loads audio clip and handles commands that are sent to the file"""        
         #Load music to play
-        AudioClip.mci_send("Open {0} type mpegvideo alias {1}".format(self.path, self.alias))
-        self.file_length = int(AudioClip.mci_send("Status {0} length".format(self.alias)))
-        self.status = "loaded"
-        
+        check_error = AudioClip.mci_send("Open {0} type mpegvideo alias {1}".format(self.path, self.alias))[1]
+        if check_error != 0:
+            self.error = "Unable to load audio file -- MCI error " + str(check_error)
+            self.status = "stopped"
+        else:
+            self.file_length = int(AudioClip.mci_send("Status {0} length".format(self.alias))[0])
+            self.status = "loaded"
+
         #Close the audio file if the audio file is stopped or if it completes playing
         while self.status != "stopped" and not (self.status == 'playing' and self.__system_status() == "stopped"):
             for event in self.event_queue:
@@ -155,7 +162,7 @@ class AudioClip(object):
 
     def __system_status(self):
         """Returns the system playing status"""
-        return AudioClip.mci_send("Status {0} mode".format(self.alias))
+        return AudioClip.mci_send("Status {0} mode".format(self.alias))[0]
 
     @staticmethod
     def mci_send(command):
@@ -166,6 +173,4 @@ class AudioClip(object):
         buffer = c_buffer(255)
         result = winmm.mciSendStringA(command.encode(), buffer, 254, 0)
 
-        if result != 0:
-            print("Error {0} in mciSendString {1}".format( result, command ))
-        return buffer.value.decode()
+        return (buffer.value.decode(), result)
